@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 
@@ -9,72 +10,112 @@ public class DoughInteractable : MonoBehaviour
     private Vector3 initialScale;
     private float initialHandDistance;
 
-    // 记录手部上一帧的位置，用来计算“拍”的速度
+    [Header("绑定握拳信号(控制是否能砸)")]
+    public InputActionProperty leftGripAction;  
+    public InputActionProperty rightGripAction; 
+
+    // ✨新增音效 1：在面板里暴露一个槽位，用来拖入 AudioSource 组件
+    [Header("砸扁音效")]
+    public AudioSource smashSound; 
+
+    private Transform hoveringHand;
     private Vector3 lastHandPosition;
+    private float smashCooldown = 0f;
 
     void Awake()
     {
         grabInteractable = GetComponent<XRGrabInteractable>();
         initialScale = transform.localScale;
-        
-        // 允许双手同时抓取
         grabInteractable.selectMode = InteractableSelectMode.Multiple;
+        
+        grabInteractable.hoverEntered.AddListener(OnHoverEnter);
+        grabInteractable.hoverExited.AddListener(OnHoverExit);
+    }
 
-        // 监听手的“触碰（Hover）”事件，代替物理碰撞
-        grabInteractable.hoverEntered.AddListener(OnHandTouch);
+    void OnEnable()
+    {
+        if (leftGripAction.action != null) leftGripAction.action.Enable();
+        if (rightGripAction.action != null) rightGripAction.action.Enable();
+    }
+
+    void OnDisable()
+    {
+        if (leftGripAction.action != null) leftGripAction.action.Disable();
+        if (rightGripAction.action != null) rightGripAction.action.Disable();
     }
 
     void OnDestroy()
     {
-        grabInteractable.hoverEntered.RemoveListener(OnHandTouch);
+        if (grabInteractable != null)
+        {
+            grabInteractable.hoverEntered.RemoveListener(OnHoverEnter);
+            grabInteractable.hoverExited.RemoveListener(OnHoverExit);
+        }
+    }
+
+    private void OnHoverEnter(HoverEnterEventArgs args)
+    {
+        hoveringHand = args.interactorObject.transform;
+        lastHandPosition = hoveringHand.position;
+    }
+
+    private void OnHoverExit(HoverExitEventArgs args)
+    {
+        if (hoveringHand == args.interactorObject.transform) hoveringHand = null;
     }
 
     void Update()
     {
-        // === 逻辑 1：双手拉伸 ===
+        smashCooldown -= Time.deltaTime;
+
+        if (hoveringHand != null && grabInteractable.interactorsSelecting.Count == 0)
+        {
+            float velocityY = (hoveringHand.position.y - lastHandPosition.y) / Time.deltaTime;
+            float leftGrip = leftGripAction.action != null ? leftGripAction.action.ReadValue<float>() : 0f;
+            float rightGrip = rightGripAction.action != null ? rightGripAction.action.ReadValue<float>() : 0f;
+            
+            bool isFist = leftGrip > 0.5f || rightGrip > 0.5f;
+
+            if (isFist && velocityY < -0.5f && smashCooldown <= 0f)
+            {
+                SmashDough();
+                smashCooldown = 0.5f; 
+            }
+            lastHandPosition = hoveringHand.position;
+        }
+
         if (grabInteractable.interactorsSelecting.Count == 2)
         {
-            Transform hand1 = grabInteractable.interactorsSelecting[0].transform;
-            Transform hand2 = grabInteractable.interactorsSelecting[1].transform;
+            Transform h1 = grabInteractable.interactorsSelecting[0].transform;
+            Transform h2 = grabInteractable.interactorsSelecting[1].transform;
+            float dist = Vector3.Distance(h1.position, h2.position);
             
-            float currentDistance = Vector3.Distance(hand1.position, hand2.position);
-            
-            if (initialHandDistance == 0) initialHandDistance = currentDistance;
+            if (initialHandDistance == 0) initialHandDistance = dist;
 
-            // 根据双手距离拉长 X 轴，同时让 Y 和 Z 变细（保持体积守恒）
-            float stretchFactor = currentDistance / initialHandDistance;
-            transform.localScale = new Vector3(
-                initialScale.x * stretchFactor, 
-                initialScale.y / Mathf.Sqrt(stretchFactor), 
-                initialScale.z / Mathf.Sqrt(stretchFactor)
-            );
+            float factor = dist / initialHandDistance;
+            transform.localScale = new Vector3(initialScale.x * factor, initialScale.y / Mathf.Sqrt(factor), initialScale.z / Mathf.Sqrt(factor));
         }
-        else
-        {
-            initialHandDistance = 0; // 松开后重置
-            
-            // 记录单手抓取时的位置，供下一帧计算速度（可选扩展）
-            if (grabInteractable.interactorsSelecting.Count == 1)
-            {
-                lastHandPosition = grabInteractable.interactorsSelecting[0].transform.position;
-            }
-        }
+        else { initialHandDistance = 0; }
     }
 
-    // === 逻辑 2：单手拍扁（绝对安全，不需要手模型有 Collider） ===
-    private void OnHandTouch(HoverEnterEventArgs args)
+    private void SmashDough()
     {
-        // 检查摸到球的是不是直接交互器（手）
-        if (args.interactorObject is UnityEngine.XR.Interaction.Toolkit.Interactors.XRDirectInteractor)
-        {
-            // 只要手摸上来，就让它瞬间变扁一点点（Y轴缩小，XZ轴变宽）
-            // 这里你可以根据需要调整数值，目前是拍一下扁 10%
-            Vector3 currentScale = transform.localScale;
-            transform.localScale = new Vector3(
-                currentScale.x * 1.1f, 
-                currentScale.y * 0.9f, 
-                currentScale.z * 1.1f
-            );
-        }
+        // 先获取当前底部高度
+        float bottomY = GetComponent<Collider>().bounds.min.y;
+        transform.rotation = Quaternion.identity;
+
+        Vector3 lastScale = transform.localScale;
+        if (lastScale.y < initialScale.y * 0.15f) return; 
+
+        // ✨新增音效 2：只要触发了砸扁逻辑，就播放声音！
+        if (smashSound != null) smashSound.Play();
+
+        float flattenAmount = 0.05f; 
+        float growAmount = 0.025f;   
+        
+        transform.localScale = new Vector3(lastScale.x + growAmount, lastScale.y - flattenAmount, lastScale.z + growAmount);
+
+        // 绝对吸附贴合桌面
+        transform.position = new Vector3(transform.position.x, bottomY + (transform.localScale.y * 0.5f), transform.position.z);
     }
 }
