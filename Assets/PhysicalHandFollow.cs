@@ -7,22 +7,24 @@ public class PhysicalHandFollow : MonoBehaviour
     [Header("追踪目标 (必须填 LeftHandAnchor)")]
     public Transform targetController; 
     
-    [Header("抓取组件 (消除抖动关键)")]
+    [Header("抓取组件 (消除抓取抖动)")]
     public UnityEngine.XR.Interaction.Toolkit.Interactors.XRDirectInteractor directInteractor; 
     
     private Rigidbody rb;
     private Collider handCollider;
     
-    public float followSpeed = 20f; 
-    public float maxDistance = 0.5f; 
+    public float followSpeed = 30f; 
+    public float teleportDistance = 0.3f; // 🌟 如果手离手柄超过30厘米(比如摇杆走路)，瞬间瞬移跟上，绝不颤动！
 
     void Start()
     {
         rb = GetComponent<Rigidbody>();
         handCollider = GetComponent<Collider>();
         
-        // 🌟 错在这里！必须是 150f 以上，否则转身手卡住！
-        rb.maxAngularVelocity = 150f; 
+        // 关键物理设置
+        rb.useGravity = false;
+        rb.isKinematic = false;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
 
         if (directInteractor != null)
         {
@@ -55,25 +57,21 @@ public class PhysicalHandFollow : MonoBehaviour
     {
         if (targetController == null) return;
 
+        // 1. 位置跟随：保留物理阻挡
         Vector3 positionDifference = targetController.position - transform.position;
-        if (positionDifference.magnitude > maxDistance)
+        if (positionDifference.magnitude > teleportDistance)
         {
+            // 玩家用摇杆走路时，瞬间瞬移手部，消除追赶产生的剧烈颤动
             transform.position = targetController.position;
             rb.linearVelocity = Vector3.zero;
         }
         else
         {
+            // 正常挥手时，用速度追赶（遇到桌子会被挡住）
             rb.linearVelocity = positionDifference * followSpeed;
         }
 
-        Quaternion rotationDifference = targetController.rotation * Quaternion.Inverse(transform.rotation);
-        rotationDifference.ToAngleAxis(out float angle, out Vector3 axis);
-        if (angle > 180f) angle -= 360f; 
-        
-        if (axis != Vector3.zero && !float.IsNaN(axis.x))
-        {
-            // 🌟 乘数改为 50f，让旋转立刻响应
-            rb.angularVelocity = axis * (angle * Mathf.Deg2Rad * 50f);
-        }
+        // 2. 旋转跟随：终极杀招！无视一切阻力，强制锁死手腕方向和 Anchor 完全一致！
+        rb.MoveRotation(targetController.rotation);
     }
 }
