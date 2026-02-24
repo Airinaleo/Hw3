@@ -14,9 +14,12 @@ public class DoughInteractable : MonoBehaviour
     public InputActionProperty leftGripAction;  
     public InputActionProperty rightGripAction; 
 
-    // ✨新增音效 1：在面板里暴露一个槽位，用来拖入 AudioSource 组件
     [Header("砸扁音效")]
     public AudioSource smashSound; 
+
+    // ✨ 核心修复：在这里声明文字标签，才能在砸扁时销毁它！
+    [Header("对应的悬浮文字标签 (拖入SphereLabelCanvas)")]
+    public GameObject instructionLabel;
 
     private Transform hoveringHand;
     private Vector3 lastHandPosition;
@@ -100,14 +103,18 @@ public class DoughInteractable : MonoBehaviour
 
     private void SmashDough()
     {
-        // 先获取当前底部高度
+        // ✨ 核心修复：只要砸了，立刻销毁那个 "Smash Me" 标签！
+        if (instructionLabel != null)
+        {
+            Destroy(instructionLabel);
+        }
+
         float bottomY = GetComponent<Collider>().bounds.min.y;
         transform.rotation = Quaternion.identity;
 
         Vector3 lastScale = transform.localScale;
         if (lastScale.y < initialScale.y * 0.15f) return; 
 
-        // ✨新增音效 2：只要触发了砸扁逻辑，就播放声音！
         if (smashSound != null) smashSound.Play();
 
         float flattenAmount = 0.05f; 
@@ -115,7 +122,6 @@ public class DoughInteractable : MonoBehaviour
         
         transform.localScale = new Vector3(lastScale.x + growAmount, lastScale.y - flattenAmount, lastScale.z + growAmount);
 
-        // 绝对吸附贴合桌面
         transform.position = new Vector3(transform.position.x, bottomY + (transform.localScale.y * 0.5f), transform.position.z);
     }
 }
