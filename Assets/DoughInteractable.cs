@@ -79,7 +79,9 @@ public class DoughInteractable : MonoBehaviour
             
             bool isFist = leftGrip > 0.5f || rightGrip > 0.5f;
 
-            if (isFist && velocityY < -0.5f && smashCooldown <= 0f)
+         // 替换成这行（增加距离判定）：
+        float distToHand = Vector3.Distance(hoveringHand.position, transform.position);
+        if (isFist && velocityY < -0.5f && smashCooldown <= 0f && distToHand < 0.15f)
             {
                 SmashDough();
                 smashCooldown = 0.5f; 
